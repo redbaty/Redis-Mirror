@@ -17,12 +17,13 @@ namespace RedisMirror
         static Program()
         {
             Log.Logger = new LoggerConfiguration()
-                .WriteTo.Console()
+                .MinimumLevel.Verbose().WriteTo.Console()
                 .CreateLogger();
         }
 
         private static async Task Main(string sourceHost, int sourceDbIndex, string targetHost, int targetDbIndex,
                                        int readTimeout = 30, int batchSize = 100, int keyPageSize = 2000,
+                                       string pattern = null,
                                        bool noConfirm = false)
         {
             if (string.IsNullOrEmpty(sourceHost))
@@ -39,7 +40,8 @@ namespace RedisMirror
 
             var sourceConf =
                 $"{sourceHost},defaultDatabase={sourceDbIndex},syncTimeout={TimeSpan.FromSeconds(readTimeout).TotalMilliseconds}";
-            var targetConf = $"{targetHost},defaultDatabase={targetDbIndex}";
+            var targetConf =
+                $"{targetHost},defaultDatabase={targetDbIndex},syncTimeout={TimeSpan.FromSeconds(readTimeout).TotalMilliseconds}";
 
             if (!noConfirm)
             {
@@ -67,7 +69,8 @@ namespace RedisMirror
             Log.Logger.Debug("Source multiplexer connected!");
 
             var server = sourceMultiplexer.GetServer(sourceMultiplexer.GetEndPoints().Single());
-            var keys = server.Keys(pageSize: keyPageSize, database: sourceDbIndex).ToList();
+            var keys = server.Keys(pageSize: keyPageSize, database: sourceDbIndex)
+                .Where(i => string.IsNullOrEmpty(pattern) || i.ToString().StartsWith(pattern)).ToList();
 
             Log.Logger.Information("{Count} keys gathered from server {Server}.", keys.Count, server.EndPoint);
 
@@ -79,7 +82,8 @@ namespace RedisMirror
 
                 await foreach (var (key, value) in ReadValues(keysBatch, sourceDb))
                 {
-                    await targetDb.KeyRestoreAsync(key, value, flags: CommandFlags.FireAndForget);
+                    targetDb.KeyDelete(key);
+                    targetDb.KeyRestore(key, value);
                 }
 
                 startNew.Stop();
