@@ -16,7 +16,7 @@ namespace RedisMirror
     {
         public static async IAsyncEnumerable<T[]> Batch<T>(this IAsyncEnumerable<T> source, int batchSize)
         {
-            var currentBatchBuffer = new Queue<T>();
+            var currentBatchBuffer = new Queue<T>(batchSize);
 
             await foreach (var item in source)
             {
