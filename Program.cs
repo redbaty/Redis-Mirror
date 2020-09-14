@@ -12,6 +12,25 @@ using StackExchange.Redis;
 
 namespace RedisMirror
 {
+    internal static class LinqExtensions
+    {
+        public static async IAsyncEnumerable<T[]> Batch<T>(this IAsyncEnumerable<T> source, int batchSize)
+        {
+            var currentBatchBuffer = new Queue<T>();
+
+            await foreach (var item in source)
+            {
+                currentBatchBuffer.Enqueue(item);
+
+                if (currentBatchBuffer.Count >= batchSize)
+                {
+                    yield return currentBatchBuffer.ToArray();
+                    currentBatchBuffer.Clear();
+                }
+            }
+        }
+    }
+
     internal class Program
     {
         static Program()
@@ -22,9 +41,9 @@ namespace RedisMirror
         }
 
         private static async Task Main(string sourceHost, int sourceDbIndex, string targetHost, int targetDbIndex,
-                                       int readTimeout = 30, int batchSize = 100, int keyPageSize = 2000,
-                                       string pattern = null,
-                                       bool noConfirm = false)
+            int readTimeout = 30, int batchSize = 100, int keyPageSize = 2000,
+            string pattern = null,
+            bool noConfirm = false)
         {
             if (string.IsNullOrEmpty(sourceHost))
             {
@@ -80,12 +99,12 @@ namespace RedisMirror
 
                 var startNew = Stopwatch.StartNew();
 
-                await foreach (var (key, value) in ReadValues(keysBatch, sourceDb))
+                await foreach (var keyValuePairs in ReadValues(keysBatch, sourceDb).Batch(batchSize))
                 {
-                    targetDb.KeyDelete(key);
-                    targetDb.KeyRestore(key, value);
+                    targetDb.KeyDelete(keyValuePairs.Select(i => i.Key).ToArray());
+                    await Task.WhenAll(keyValuePairs.Select(i => targetDb.KeyRestoreAsync(i.Key, i.Value)));
                 }
-
+                
                 startNew.Stop();
 
                 Log.Logger.Debug("Batch {batchIndex} took {time}.", batchIndex, startNew.Elapsed);
