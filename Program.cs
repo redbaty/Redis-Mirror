@@ -12,25 +12,6 @@ using StackExchange.Redis;
 
 namespace RedisMirror
 {
-    internal static class LinqExtensions
-    {
-        public static async IAsyncEnumerable<T[]> Batch<T>(this IAsyncEnumerable<T> source, int batchSize)
-        {
-            var currentBatchBuffer = new Queue<T>(batchSize);
-
-            await foreach (var item in source)
-            {
-                currentBatchBuffer.Enqueue(item);
-
-                if (currentBatchBuffer.Count >= batchSize)
-                {
-                    yield return currentBatchBuffer.ToArray();
-                    currentBatchBuffer.Clear();
-                }
-            }
-        }
-    }
-
     internal class Program
     {
         static Program()
@@ -41,8 +22,8 @@ namespace RedisMirror
         }
 
         private static async Task Main(string sourceHost, int sourceDbIndex, string targetHost, int targetDbIndex,
-            int readTimeout = 30, int batchSize = 100, int keyPageSize = 2000,
-            string pattern = null,
+            int readTimeout = 90, int batchSize = 1000, int keyPageSize = 2000,
+            string pattern = "*",
             bool noConfirm = false)
         {
             if (string.IsNullOrEmpty(sourceHost))
@@ -71,7 +52,8 @@ namespace RedisMirror
                         sourceDbIndex,
                         targetHost,
                         targetDbIndex,
-                        batchSize
+                        batchSize,
+                        pattern
                     });
 
                 Console.ReadKey(true);
@@ -88,10 +70,11 @@ namespace RedisMirror
             Log.Logger.Debug("Source multiplexer connected!");
 
             var server = sourceMultiplexer.GetServer(sourceMultiplexer.GetEndPoints().Single());
-            var keys = server.Keys(pageSize: keyPageSize, database: sourceDbIndex)
-                .Where(i => string.IsNullOrEmpty(pattern) || i.ToString().StartsWith(pattern)).ToList();
+            var keys = server
+                .Keys(pattern: pattern, pageSize: keyPageSize, database: sourceDbIndex)
+                .ToArray();
 
-            Log.Logger.Information("{Count} keys gathered from server {Server}.", keys.Count, server.EndPoint);
+            Log.Logger.Information("{Count} keys gathered from server {Server}.", keys.Length, server.EndPoint);
 
             foreach (var (batchIndex, keysBatch) in keys.Batch(batchSize).Index())
             {
@@ -104,7 +87,7 @@ namespace RedisMirror
                     targetDb.KeyDelete(keyValuePairs.Select(i => i.Key).ToArray());
                     await Task.WhenAll(keyValuePairs.Select(i => targetDb.KeyRestoreAsync(i.Key, i.Value)));
                 }
-                
+
                 startNew.Stop();
 
                 Log.Logger.Debug("Batch {batchIndex} took {time}.", batchIndex, startNew.Elapsed);
